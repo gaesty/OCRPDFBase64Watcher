@@ -36,16 +36,15 @@ Depuis la refactorisation, la logique est organisée dans un paquet Python `watc
 
 Exemples d'exécution (depuis la racine du projet) :
 
-1. Utilisation simple :
+1. Split Version : 
 ```
-export OCR_INPUT_DIRECTORY=./input-pdfs
-export OCR_OUTPUT_DIRECTORY=./output-pdfs
-python3 watcher_base64_threading.py --input-dir $OCR_INPUT_DIRECTORY --output-dir $OCR_OUTPUT_DIRECTORY
+env OCR_INPUT_DIRECTORY=./{SOURCE_FOLDER} OCR_OUTPUT_DIRECTORY=./{DESTINATION_FOLDER} python3 watcher_base64_threading_split.py
 ```
 
-2. Avec variables d'environnement (POSIX) et options :
+
+2. Single Version : 
 ```
-OCR_INPUT_DIRECTORY=./input-pdfs OCR_OUTPUT_DIRECTORY=./output-pdfs python3 watcher_base64_threading.py --initial-scan
+env OCR_INPUT_DIRECTORY=./{SOURCE_FOLDER} OCR_OUTPUT_DIRECTORY=./{DESTINATION_FOLDER} python3 watcher_base64_threading.py
 ```
 
 Options utiles du script :
