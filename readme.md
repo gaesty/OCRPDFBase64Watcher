@@ -2,18 +2,20 @@
 
 Ce petit utilitaire surveille un répertoire pour détecter des fichiers PDF entrants, tente d'exécuter l'OCR (via ocrmypdf) et écrit deux sorties :
 
-- un PDF OCRisé nommé <nom>_ocr.pdf dans le dossier de sortie
+- un PDF OCRisé nommé <nom>\_ocr.pdf dans le dossier de sortie
 - un fichier texte <nom>.base64 contenant le PDF (OCRisé si possible) encodé en base64
 
-Le script principal est `watcher_base64_threading.py` (remplace l'ancien `watcher.py`).
+Le script principal est `watcher_base64_threading.py`.
+Depuis la refactorisation, la logique est organisée dans un paquet Python `watcher` (modules `utils.py`, `ocr.py`, `handlers.py`, `cli.py`). Le script garde la même interface et délègue au paquet.
 
 ## Pré-requis système
 
 - Debian/Ubuntu :
-  - Installez Tesseract et ses langues si nécessaire :
-	 sudo apt install tesseract-ocr tesseract-ocr-eng
-  - Installez les dépendances recommandées pour ocrmypdf (ghostscript, qpdf...) :
-	 sudo apt install ghostscript qpdf libtiff5
+
+  - Installez Tesseract et ses langues si nécessaire : <br>
+    `sudo apt install tesseract-ocr tesseract-ocr-eng`
+  - Installez les dépendances recommandées pour ocrmypdf (ghostscript, qpdf...) : <br>
+    `sudo apt install ghostscript qpdf libtiff5`
 
 - ocrmypdf lui-même est requis pour bénéficier de l'OCR. Si vous n'en avez pas besoin, le watcher émettra simplement les octets du PDF original en base64.
 
@@ -21,12 +23,12 @@ Le script principal est `watcher_base64_threading.py` (remplace l'ancien `watche
 
 1. Créez un environnement virtuel (recommandé) :
 
-	python3 -m venv .venv
-	source .venv/bin/activate
+   `python3 -m venv .venv` <br>
+   `source .venv/bin/activate`
 
 2. Installez les dépendances Python listées dans `requirements.txt` :
 
-	pip install -r requirements.txt
+   `pip install -r requirements.txt`
 
 > Note : le paquet `ocrmypdf[watcher]` fournit des dépendances pour la surveillance, mais ce dépôt utilise `watchdog` et `typer` explicitement.
 
@@ -34,15 +36,17 @@ Le script principal est `watcher_base64_threading.py` (remplace l'ancien `watche
 
 Exemples d'exécution (depuis la racine du projet) :
 
-1) Utilisation simple :
+1. Utilisation simple :
+```
+export OCR_INPUT_DIRECTORY=./input-pdfs
+export OCR_OUTPUT_DIRECTORY=./output-pdfs
+python3 watcher_base64_threading.py --input-dir $OCR_INPUT_DIRECTORY --output-dir $OCR_OUTPUT_DIRECTORY
+```
 
-	export OCR_INPUT_DIRECTORY=./input-pdfs
-	export OCR_OUTPUT_DIRECTORY=./output-pdfs
-	python3 watcher_base64_threading.py --input-dir $OCR_INPUT_DIRECTORY --output-dir $OCR_OUTPUT_DIRECTORY
-
-2) Avec variables d'environnement (POSIX) et options :
-
-	OCR_INPUT_DIRECTORY=./input-pdfs OCR_OUTPUT_DIRECTORY=./output-pdfs python3 watcher_base64_threading.py --initial-scan
+2. Avec variables d'environnement (POSIX) et options :
+```
+OCR_INPUT_DIRECTORY=./input-pdfs OCR_OUTPUT_DIRECTORY=./output-pdfs python3 watcher_base64_threading.py --initial-scan
+```
 
 Options utiles du script :
 
@@ -57,7 +61,11 @@ Le script détecte automatiquement si `ocrmypdf` est installé. S'il ne l'est pa
 
 ## Fichiers importants
 
-- `watcher_base64_threading.py` : script principal (watcher + OCR + conversion base64)
+- `watcher_base64_threading.py` : script principal (watcher + OCR + conversion base64) ; aujourd'hui simple wrapper autour de `watcher.cli`
+- `watcher/cli.py` : CLI Typer (commande `main`)
+- `watcher/handlers.py` : gestionnaire `PdfToBase64Handler`
+- `watcher/ocr.py` : fonction `ocr_to_bytes` et dépendances optionnelles
+- `watcher/utils.py` : utilitaires `is_within`, `wait_for_file_ready`
 - `requirements.txt` : dépendances Python
 
 ## Liens utiles
@@ -72,10 +80,19 @@ Le script détecte automatiquement si `ocrmypdf` est installé. S'il ne l'est pa
 
 Dans PowerShell (utilisant WSL) :
 
-	wsl bash -lc "OCR_INPUT_DIRECTORY=./input-pdfs OCR_OUTPUT_DIRECTORY=./output-pdfs python3 watcher_base64_threading.py --input-dir ./input-pdfs --output-dir ./output-pdfs"
+    wsl bash -lc "OCR_INPUT_DIRECTORY=./input-pdfs OCR_OUTPUT_DIRECTORY=./output-pdfs python3 watcher_base64_threading.py --input-dir ./input-pdfs --output-dir ./output-pdfs"
+
+## Utilisation avancée (importer comme librairie)
+
+Vous pouvez aussi importer le paquet `watcher` dans votre propre code :
+
+```python
+from watcher import app, main, PdfToBase64Handler
+# ou encore :
+from watcher.cli import app
+```
 
 ## Remarques
 
 - Le watcher utilise `watchdog` et choisit automatiquement entre `Observer` et `PollingObserver` (utile sur montages réseau ou /mnt).
 - Le comportement par défaut est de traiter les fichiers existants à l'initialisation (`--initial-scan` activé).
-
