@@ -75,12 +75,6 @@ Le script détecte automatiquement si `ocrmypdf` est installé. S'il ne l'est pa
 - PikePDF : [Github](https://github.com/pikepdf/pikepdf)
 - Tutorial OCRmyPDF : [Nutrient](https://www.nutrient.io/blog/how-to-ocr-pdfs-in-linux/)
 
-## Exemple rapide (Windows PowerShell sous WSL)
-
-Dans PowerShell (utilisant WSL) :
-
-    wsl bash -lc "OCR_INPUT_DIRECTORY=./input-pdfs OCR_OUTPUT_DIRECTORY=./output-pdfs python3 watcher_base64_threading.py --input-dir ./input-pdfs --output-dir ./output-pdfs"
-
 ## Utilisation avancée (importer comme librairie)
 
 Vous pouvez aussi importer le paquet `watcher` dans votre propre code :
