@@ -142,13 +142,3 @@ CSV attendu : colonnes `complete_name` et `file_path`.
   ```bash
   python3 watcher_csv.py --input-dir /mnt/share --output-dir ./ocr_out --csv-file ./files_to_process.csv
   ```
-
-
-<!--
-2025-12-13 08:59:52 : CpA24050300026_4RO3PN.pdf
-2025-12-13 09:16:00 : CpA24061900041_SYCHFW.pdf
-2025-12-13 09:19:29 : CpA24062600022_BCTPJH.pdf
-2025-12-13 10:41:27 : CpA24081900028_QWD3AW.pdf
-2025-12-13 13:51:13 : CpA24102500030_4ZBMEL.pdf
-2025-12-14 07:42:10 : CpA25020400065_EX6Y0X.pdf
--->
