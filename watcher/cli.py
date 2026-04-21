@@ -1,9 +1,10 @@
-import os
-import time
 import logging
+import os
+import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set
 
 import typer
 from watchdog.observers import Observer
@@ -12,8 +13,22 @@ from watchdog.observers.polling import PollingObserver
 from .handlers import PdfToBase64Handler
 from .utils import is_within
 
-
 app = typer.Typer(add_completion=False, no_args_is_help=True)
+
+
+def load_history(history_file: Path) -> Set[str]:
+    """Charge la liste des fichiers déjà traités."""
+    if not history_file.exists():
+        return set()
+    try:
+        return set(
+            line.strip()
+            for line in history_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    except Exception as e:
+        logging.warning(f"Impossible de lire l'historique {history_file}: {e}")
+        return set()
 
 
 @app.command()
@@ -34,11 +49,28 @@ def main(
         help="Where to write OCR PDFs and .base64 files; defaults to <input-dir>/base64",
         envvar="OCR_OUTPUT_DIRECTORY",
     ),
+    archive_dir: Optional[Path] = typer.Option(
+        None,
+        "--archive-dir",
+        help="Where to archive generated .base64 files by year",
+        envvar="OCR_ARCHIVE_DIRECTORY",
+    ),
     workers: Optional[int] = typer.Option(
         None,
         "--workers",
         help="Max number of PDFs to process concurrently",
         envvar="OCR_WORKERS",
+    ),
+    workers_auto: Optional[str] = typer.Option(
+        None,
+        "--workers-auto",
+        flag_value="half",
+        help=(
+            "When --workers is not provided: 'half' uses ~50% of CPUs (default), 'full' "
+            "uses all CPUs (useful for free-threaded Python builds). If the option "
+            "is given without a value it will default to 'half'."
+        ),
+        envvar="OCR_WORKERS_AUTO",
     ),
     ocr_jobs: Optional[int] = typer.Option(
         None,
@@ -46,17 +78,24 @@ def main(
         help="Parallel jobs per file for ocrmypdf (set 1 when using multiple workers to avoid oversubscription)",
         envvar="OCR_JOBS",
     ),
-    initial_scan: bool = typer.Option(
-        True,
-        "--initial-scan/--no-initial-scan",
+    initial_scan_flag: bool = typer.Option(
+        False,
+        "--initial-scan",
         help="Process existing PDFs at startup",
-        envvar="OCR_INITIAL_SCAN",
+    ),
+    no_initial_scan: bool = typer.Option(
+        False,
+        "--no-initial-scan",
+        help="Skip processing existing PDFs at startup",
     ),
     retries: int = typer.Option(
         30, "--retries", help="Max readiness checks before giving up"
     ),
-    use_polling: Optional[bool] = typer.Option(
-        None, "--poll/--no-poll", help="Force polling observer (auto if under /mnt)"
+    poll: bool = typer.Option(
+        False, "--poll", help="Force polling observer (overrides auto-detection)"
+    ),
+    no_poll: bool = typer.Option(
+        False, "--no-poll", help="Force inotify observer (overrides auto-detection)"
     ),
     loglevel: str = typer.Option(
         "INFO", "--loglevel", help="Logging level: DEBUG, INFO, WARNING, ERROR"
@@ -66,6 +105,12 @@ def main(
         "--output-type",
         help="OCR output type: 'pdf' for regular PDF (default) or 'pdfa' for PDF/A-2B",
         envvar="OCR_OUTPUT_TYPE",
+    ),
+    jbig2: str = typer.Option(
+        "off",
+        "--jbig2",
+        help="JBIG2 compression for bitonal images: 'off' (default), 'lossless', or 'lossy' (requires jbig2 binary)",
+        envvar="OCR_JBIG2",
     ),
 ):
     """Watch a folder and write a <name>.base64 file for each PDF.
@@ -87,12 +132,28 @@ def main(
     else:
         output_dir = output_dir.expanduser().resolve()
 
-    # Auto-poll under /mnt to avoid inotify issues
-    if use_polling is None:
+    if archive_dir is not None:
+        archive_dir = archive_dir.expanduser().resolve()
+
+    # Resolve observer mode
+    if poll and no_poll:
+        raise typer.BadParameter("--poll and --no-poll are mutually exclusive")
+    if poll:
+        use_polling = True
+    elif no_poll:
+        use_polling = False
+    else:
+        # Auto-poll under /mnt to avoid inotify issues
         use_polling = str(input_dir).startswith("/mnt/")
 
     # Make sure output exists
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- HISTORIQUE ---
+    history_file = output_dir / ".processed_history"
+    processed_files = load_history(history_file)
+    logging.info(f"Historique chargé : {len(processed_files)} fichiers déjà traités.")
+    # ------------------
 
     logging.info(f"Watching: {input_dir}")
     logging.info(f"Output .base64 to: {output_dir}")
@@ -102,7 +163,13 @@ def main(
     # Concurrency defaults: favor across-file concurrency; if workers>1 and ocr_jobs not set, set ocr_jobs=1
     if workers is None:
         cpu = os.cpu_count() or 2
-        workers = max(1, cpu // 2)
+        auto_mode = (workers_auto or "half").strip().lower()
+        if auto_mode not in {"half", "full"}:
+            logging.warning(
+                f"Unknown --workers-auto '{workers_auto}', defaulting to 'half'"
+            )
+            auto_mode = "half"
+        workers = cpu if auto_mode == "full" else max(1, cpu // 2)
     if (workers or 1) > 1 and (ocr_jobs is None):
         ocr_jobs = 1
 
@@ -112,16 +179,65 @@ def main(
         logging.warning(f"Unknown --output-type '{output_type}', defaulting to 'pdf'")
         output_type = "pdf"
 
+    # Normalize JBIG2 mode
+    jbig2_mode = (jbig2 or "off").strip().lower()
+    if jbig2_mode not in {"off", "lossless", "lossy"}:
+        logging.warning(f"Unknown --jbig2 '{jbig2}', defaulting to 'off'")
+        jbig2_mode = "off"
+
+    # Try to detect free-threaded builds (if API present)
+    is_gil_enabled = getattr(sys, "_is_gil_enabled", None)
+    gil_status = None
+    if callable(is_gil_enabled):
+        try:
+            gil_status = bool(is_gil_enabled())
+        except Exception:
+            gil_status = None
+
     logging.info(
-        f"Concurrency -> workers: {workers}, ocr_jobs per file: {ocr_jobs if ocr_jobs is not None else (os.cpu_count() or 1)}; output_type: {output_type}"
+        f"Concurrency -> workers: {workers}, ocr_jobs per file: {ocr_jobs if ocr_jobs is not None else (os.cpu_count() or 1)}; output_type: {output_type}; jbig2: {jbig2_mode}; GIL enabled: {gil_status if gil_status is not None else 'unknown'}"
     )
 
     executor = ThreadPoolExecutor(
         max_workers=workers or 1, thread_name_prefix="ocr-worker"
     )
     handler = PdfToBase64Handler(
-        input_dir, output_dir, use_polling, retries, executor, ocr_jobs, output_type
+        input_dir,
+        output_dir,
+        archive_dir,
+        use_polling,
+        retries,
+        executor,
+        ocr_jobs,
+        output_type,
+        jbig2_mode,
+        history_file,  # Passé au handler
+        processed_files,  # Passé au handler
     )
+
+    # Determine initial scan behavior (defaults to True)
+    if initial_scan_flag and no_initial_scan:
+        raise typer.BadParameter(
+            "--initial-scan and --no-initial-scan are mutually exclusive"
+        )
+    initial_scan = True
+    if initial_scan_flag:
+        initial_scan = True
+    elif no_initial_scan:
+        initial_scan = False
+    else:
+        # Allow environment override via OCR_INITIAL_SCAN
+        env_is = os.getenv("OCR_INITIAL_SCAN")
+        if env_is is not None:
+            val = env_is.strip().lower()
+            if val in {"1", "true", "yes", "y", "on"}:
+                initial_scan = True
+            elif val in {"0", "false", "no", "n", "off"}:
+                initial_scan = False
+            else:
+                logging.warning(
+                    f"Unrecognized OCR_INITIAL_SCAN='{env_is}', defaulting to initial scan enabled"
+                )
 
     # Initial scan for existing PDFs
     if initial_scan:
@@ -129,6 +245,13 @@ def main(
             # skip inside output_dir to avoid loops
             if is_within(pdf, output_dir):
                 continue
+
+            # --- CHECK HISTORIQUE ---
+            if pdf.name in processed_files:
+                logging.debug(f"Skipping {pdf.name} (already in history)")
+                continue
+            # ------------------------
+
             try:
                 handler.submit_path(pdf)
             except Exception as e:

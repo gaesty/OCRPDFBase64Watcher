@@ -1,0 +1,8 @@
+ocrmypdf==15.2.0
+typer==0.9.0
+watchdog==3.0.0
+pikepdf==8.7.1
+
+# Notes:
+# - `ocrmypdf` requires system dependencies (tesseract, ghostscript, qpdf, etc.).
+# - If you only need base64 output and not OCR, you can omit `ocrmypdf` but the watcher will then emit original PDF bytes.

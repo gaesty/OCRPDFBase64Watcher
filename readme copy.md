@@ -5,17 +5,17 @@ Ce petit utilitaire surveille un répertoire pour détecter des fichiers PDF ent
 - un PDF OCRisé nommé <nom>\_ocr.pdf dans le dossier de sortie
 - un fichier texte <nom>.base64 contenant le PDF (OCRisé si possible) encodé en base64
 
-Le script principal est `watcher_base64_threading.py`.
+Le script principal est `watcher_base64_threading.py` (remplace l'ancien `watcher.py`).
 Depuis la refactorisation, la logique est organisée dans un paquet Python `watcher` (modules `utils.py`, `ocr.py`, `handlers.py`, `cli.py`). Le script garde la même interface et délègue au paquet.
 
 ## Pré-requis système
 
 - Debian/Ubuntu :
 
-  - Installez Tesseract et ses langues si nécessaire : <br>
-    `sudo apt install tesseract-ocr tesseract-ocr-eng`
-  - Installez les dépendances recommandées pour ocrmypdf (ghostscript, qpdf...) : <br>
-    `sudo apt install ghostscript qpdf libtiff5`
+  - Installez Tesseract et ses langues si nécessaire :
+    sudo apt install tesseract-ocr tesseract-ocr-eng
+  - Installez les dépendances recommandées pour ocrmypdf (ghostscript, qpdf...) :
+    sudo apt install ghostscript qpdf libtiff5
 
 - ocrmypdf lui-même est requis pour bénéficier de l'OCR. Si vous n'en avez pas besoin, le watcher émettra simplement les octets du PDF original en base64.
 
@@ -23,12 +23,12 @@ Depuis la refactorisation, la logique est organisée dans un paquet Python `watc
 
 1. Créez un environnement virtuel (recommandé) :
 
-   `python3 -m venv .venv` <br>
-   `source .venv/bin/activate`
+   python3 -m venv .venv
+   source .venv/bin/activate
 
 2. Installez les dépendances Python listées dans `requirements.txt` :
 
-   `pip install -r requirements.txt`
+   pip install -r requirements.txt
 
 > Note : le paquet `ocrmypdf[watcher]` fournit des dépendances pour la surveillance, mais ce dépôt utilise `watchdog` et `typer` explicitement.
 
@@ -36,27 +36,25 @@ Depuis la refactorisation, la logique est organisée dans un paquet Python `watc
 
 Exemples d'exécution (depuis la racine du projet) :
 
-1. Split Version :
+1. Utilisation simple :
 
-```
-env OCR_INPUT_DIRECTORY=./{SOURCE_FOLDER} OCR_OUTPUT_DIRECTORY=./{DESTINATION_FOLDER} python3 watcher_base64_threading_split.py
-```
+   export OCR_INPUT_DIRECTORY=./input-pdfs
+   export OCR_OUTPUT_DIRECTORY=./output-pdfs
+   python3 watcher_base64_threading.py --input-dir $OCR_INPUT_DIRECTORY --output-dir $OCR_OUTPUT_DIRECTORY
 
-2. Single Version :
+2. Avec variables d'environnement (POSIX) et options :
 
-```
-env OCR_INPUT_DIRECTORY=./{SOURCE_FOLDER} OCR_OUTPUT_DIRECTORY=./{DESTINATION_FOLDER} python3 watcher_base64_threading.py
-```
+   OCR_INPUT_DIRECTORY=./input-pdfs OCR_OUTPUT_DIRECTORY=./output-pdfs python3 watcher_base64_threading.py --initial-scan
 
-### Commandes d'exemple (activation du virtualenv et exécution)
+3. Commandes pratiques (activation de l'environnement virtuel et exécution de la version "split") :
 
-```bash
-# activer l'environnement virtuel
-source .venv/bin/activate
+   ```bash
+   # activer l'environnement virtuel
+   source .venv/bin/activate
 
-# exécuter la version 'split' (exemple concret)
-python3.14 watcher_base64_threading_split.py --input-dir ./pdfs --output-dir ./ocr_out --ocr-jobs 1 --jbig2 lossless
-```
+   # exemple : exécuter la version 'split' avec un worker OCR par fichier et compression JBIG2 lossless
+   python3.14 watcher_base64_threading_split.py --input-dir ./pdfs --output-dir ./ocr_out --ocr-jobs 1 --jbig2 lossless
+   ```
 
 Options utiles du script :
 
@@ -85,6 +83,12 @@ Le script détecte automatiquement si `ocrmypdf` est installé. S'il ne l'est pa
 - Watchdog : [Github](https://github.com/gorakhargosh/watchdog)
 - PikePDF : [Github](https://github.com/pikepdf/pikepdf)
 - Tutorial OCRmyPDF : [Nutrient](https://www.nutrient.io/blog/how-to-ocr-pdfs-in-linux/)
+
+## Exemple rapide (Windows PowerShell sous WSL)
+
+Dans PowerShell (utilisant WSL) :
+
+    wsl bash -lc "OCR_INPUT_DIRECTORY=./input-pdfs OCR_OUTPUT_DIRECTORY=./output-pdfs python3 watcher_base64_threading.py --input-dir ./input-pdfs --output-dir ./output-pdfs"
 
 ## Utilisation avancée (importer comme librairie)
 
