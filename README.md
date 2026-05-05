@@ -2,7 +2,7 @@
 
 Surveille un dossier, applique l'OCR via `ocrmypdf` quand c'est possible, compresse le PDF (Ghostscript), génère un `<nom>_ocr.pdf` et un `<nom>.base64`, et peut envoyer le PDF encodé à Odoo.
 
-Scripts d'entrée (wrappers) : `watcher_base64_threading.py`, `watcher_base64_threading_split.py`, `watcher_csv.py`.
+Scripts d'entrée (wrappers) : `watcher_base64_threading.py`, `watcher_base64_threading_split.py`, `watcher_csv.py`, `send_base64_to_odoo.py`.
 Logique partagée : paquet Python `watcher/` (`cli.py`, `cli_csv.py`, `handlers.py`, `ocr.py`, `utils.py`, `orm_odoo.py`).
 
 ## Fonctionnalités clés
@@ -13,6 +13,7 @@ Logique partagée : paquet Python `watcher/` (`cli.py`, `cli_csv.py`, `handlers.
 - Nettoyage auto en mode Odoo : supprime `_ocr.pdf` et `.base64` après envoi réussi.
 - Mode CSV pour traiter une liste de fichiers (avec recherche tolérante des chemins).
 - Options avancées : PDF/A (`--output-type pdfa`), JBIG2 (`--jbig2`), auto-calcul des workers (`--workers-auto`).
+- **Nouveau :** Script indépendant `send_base64_to_odoo.py` pour envoyer massivement des `.base64` déjà générés vers Odoo en parallèle.
 
 ## Pré-requis système
 
@@ -29,6 +30,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+*Note : Le projet supporte Python 3.14 (Free-threaded) pour désactiver le GIL et maximiser les performances multicœurs lors de l'OCR.*
 
 ## Démarrage rapide (local)
 
@@ -64,6 +66,21 @@ Comportement :
 - Si envoi OK : `_ocr.pdf` et `.base64` sont supprimés et le fichier est inscrit dans l'historique.
 - Si échec logique (template introuvable) : fichiers conservés mais le nom est quand même inscrit dans `.processed_history` pour éviter une boucle.
 
+## Mode Envoi de masse des fichiers Base64 existants vers Odoo
+
+Si vous avez déjà un dossier (`ocr_out`) rempli de fichiers `.base64` et que vous souhaitez les envoyer à Odoo massivement (en profitant du multithreading) sans relancer l'OCR, utilisez :
+
+```bash
+python3 send_base64_to_odoo.py
+```
+
+Comportement du script `send_base64_to_odoo.py` :
+- Utilise les variables d'environnement Odoo classiques du `.env`.
+- **Multithreading** : Envoie jusqu'à 5 fichiers simultanément à Odoo pour maximiser la vitesse (réglable via la variable `MAX_WORKERS` dans le script).
+- **Historique** : Lit et écrit dans un fichier local `processed_history.txt` de manière thread-safe. Seuls les fichiers dont l'envoi a retourné un **succès strict** sont inscrits dans l'historique pour éviter les doublons.
+- En cas d'erreur réseau ou d'absence de correspondance (worksheet introuvable), l'envoi échouera et le fichier ne sera pas historisé, garantissant qu'il sera retenté lors de la prochaine exécution.
+- **Logs** : Enregistre l'activité détaillée dans le fichier `send_base64_to_odoo.log` ainsi que dans la console.
+
 ## Mode CSV (batch + watcher)
 
 Permet de soumettre une liste de fichiers via CSV en plus (ou à la place) du scan initial.
@@ -79,6 +96,72 @@ python3 watcher_csv.py \
 CSV attendu : colonnes `complete_name` et `file_path`.
 - Le chemin est essayé tel quel (absolu), puis en retirant progressivement les préfixes pour le rattacher à `--input-dir`, puis via `complete_name` à la racine de `--input-dir`.
 - L'historique évite les doublons même en CSV.
+
+## Déploiement en Service (WSL & Environnement Entreprise)
+
+Pour faire tourner le script 24h/24 en arrière-plan sous Windows/WSL, utilisant des lecteurs réseaux d'entreprise (ex: `M:`, `Q:` montés via `drvfs`), un simple cronjob ne suffit pas car Windows suspend WSL et déconnecte les lecteurs.
+
+### 1. Activer Systemd dans WSL
+Dans votre terminal WSL, éditez le fichier `/etc/wsl.conf` :
+```bash
+sudo nano /etc/wsl.conf
+```
+Ajoutez ces lignes :
+```ini
+[boot]
+systemd=true
+```
+
+### 2. Créer le Service Systemd
+Créez le fichier de service :
+```bash
+sudo nano /etc/systemd/system/ocr-watcher.service
+```
+Insérez la configuration suivante (ajustez votre utilisateur et vos chemins). **Important** : Sous Python 3.14 (Alpha), le parseur Typer étant instable, l'injection par variable d'environnement (`Environment=`) est obligatoire pour le bon fonctionnement en service.
+
+```ini
+[Unit]
+Description=OCR PDF Base64 Watcher Service
+After=network.target local-fs.target remote-fs.target
+
+[Service]
+Type=simple
+User=VOTRE_UTILISATEUR
+WorkingDirectory=/home/VOTRE_UTILISATEUR/OCRPDFBase64Watcher
+
+# Injection des configurations
+Environment="OCR_INPUT_DIRECTORY=/mnt/m_pdf"
+Environment="OCR_OUTPUT_DIRECTORY=/mnt/d/archive_pdf"
+Environment="OCR_ARCHIVE_DIRECTORY=/mnt/q_base64"
+
+# Exécution directe via le venv
+ExecStart=/home/VOTRE_UTILISATEUR/OCRPDFBase64Watcher/venv/bin/python watcher_csv.py
+
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+Activez le service :
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable ocr-watcher.service
+sudo systemctl start ocr-watcher.service
+```
+
+### 3. Script d'Auto-Démarrage Windows (Startup)
+Pour lancer WSL de manière invisible à l'ouverture de votre session Windows (ce qui monte les disques réseaux et déclenche `systemd`), créez un script VBScript.
+
+1. Sous Windows, créez un fichier texte nommé `start_wsl_ocr.vbs`.
+2. Insérez ce code :
+   ```vbscript
+   Set objShell = CreateObject("WScript.Shell")
+   objShell.Run "wsl.exe", 0, False
+   ```
+3. Appuyez sur `Windows + R`, tapez `shell:startup` et placez ce fichier `.vbs` dans le dossier qui s'ouvre.
+
+*Note de maintenance : Après un redémarrage du PC, assurez-vous de cliquer sur vos lecteurs réseaux dans l'Explorateur Windows pour forcer la reconnexion si le service ne trouve pas les fichiers.*
 
 ## Options principales (CLI `watcher.cli` et `watcher.cli_csv`)
 
@@ -111,6 +194,7 @@ CSV attendu : colonnes `complete_name` et `file_path`.
 
 - `watcher_base64_threading.py` / `watcher_base64_threading_split.py` : wrappers CLI.
 - `watcher_csv.py` : wrapper CLI CSV.
+- `send_base64_to_odoo.py` : **Script indépendant d'envoi en masse vers Odoo.**
 - `watcher/cli.py` : CLI principale (Typer).
 - `watcher/cli_csv.py` : CLI CSV (Typer).
 - `watcher/handlers.py` : logique watcher + envoi Odoo + gestion historique.
@@ -122,6 +206,7 @@ CSV attendu : colonnes `complete_name` et `file_path`.
 ## Dépannage
 
 - Activer les logs détaillés : `python3 watcher_base64_threading.py --loglevel DEBUG`.
+- Lire les logs du service en direct : `sudo journalctl -u ocr-watcher.service -f`.
 - Fichier qui boucle : vérifier `.processed_history` dans le dossier de sortie et les droits d'écriture.
 - OCR très lent : réduisez `--ocr-jobs` (1) si vous augmentez `--workers`, ou passez `--workers-auto full` sur un Python free-threaded.
 - PDF/A : utilisez `--output-type pdfa` si Odoo ou vos clients exigent du PDF/A-2B.
@@ -142,3 +227,5 @@ CSV attendu : colonnes `complete_name` et `file_path`.
   ```bash
   python3 watcher_csv.py --input-dir /mnt/share --output-dir ./ocr_out --csv-file ./files_to_process.csv
   ```
+```
+
