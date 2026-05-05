@@ -227,5 +227,4 @@ Pour lancer WSL de manière invisible à l'ouverture de votre session Windows (c
   ```bash
   python3 watcher_csv.py --input-dir /mnt/share --output-dir ./ocr_out --csv-file ./files_to_process.csv
   ```
-```
 
