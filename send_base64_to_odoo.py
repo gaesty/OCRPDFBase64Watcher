@@ -2,6 +2,8 @@ import logging
 import os
 import sys
 import threading
+import argparse
+import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Permet d'importer le module watcher situé dans le même dossier
@@ -40,6 +42,41 @@ def mark_as_processed(filename):
     with history_lock:
         with open(HISTORY_FILE, "a", encoding="utf-8") as f:
             f.write(filename + "\n")
+
+
+def get_priority_files_from_csv(csv_path):
+    """Lit un CSV et extrait une liste de noms de fichiers (.base64) à traiter en priorité."""
+    priority_files = set()
+    if not csv_path or not os.path.isfile(csv_path):
+        if csv_path:
+            logging.warning(f"Fichier CSV introuvable : {csv_path}")
+        return priority_files
+
+    try:
+        with open(csv_path, 'r', encoding='utf-8-sig') as f:
+            # Lecture de la première ligne pour deviner le délimiteur
+            first_line = f.readline()
+            delimiter = ';' if ';' in first_line else ','
+            f.seek(0)
+            
+            reader = csv.DictReader(f, delimiter=delimiter)
+            for row in reader:
+                # Cherche les colonnes courantes
+                name = row.get('complete_name') or row.get('name')
+                if not name and row:
+                    name = list(row.values())[0] # Fallback sur la 1ère colonne
+                
+                if name:
+                    # Retire l'extension s'il y en a une, puis force .base64
+                    base_name = name.rsplit('.', 1)[0] if '.' in name else name
+                    b64_name = f"{base_name}.base64"
+                    priority_files.add(b64_name)
+                    
+        logging.info(f"{len(priority_files)} fichier(s) prioritaire(s) identifié(s) dans le CSV.")
+    except Exception as e:
+        logging.error(f"Erreur lors de la lecture du CSV {csv_path}: {e}")
+        
+    return priority_files
 
 
 def process_single_file(filename, processed_set):
@@ -82,7 +119,29 @@ def process_single_file(filename, processed_set):
         return False
 
 
-def process_base64_files():
+def run_batch(files_list, processed_set, batch_name):
+    """Lance un pool de threads pour une liste donnée de fichiers."""
+    if not files_list:
+        return
+
+    logging.info(f"--- Démarrage de la file {batch_name} ({len(files_list)} fichiers) ---")
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(process_single_file, filename, processed_set): filename
+            for filename in files_list
+        }
+
+        for future in as_completed(futures):
+            filename = futures[future]
+            try:
+                future.result()
+            except Exception as exc:
+                logging.error(
+                    f"Une exception critique inattendue s'est produite pour {filename} : {exc}"
+                )
+
+
+def process_base64_files(csv_path=None):
     if not os.path.isdir(OCR_OUT_DIR):
         logging.error(f"Le dossier '{OCR_OUT_DIR}' n'existe pas.")
         return
@@ -95,7 +154,7 @@ def process_base64_files():
     # Chargement de l'historique des fichiers déjà traités
     processed_set = load_processed_history()
 
-    # Filtrer les fichiers qui ne sont pas encore dans l'historique pour savoir combien on va vraiment traiter
+    # Filtrer les fichiers qui ne sont pas encore dans l'historique
     files_to_process = [f for f in files if f not in processed_set]
 
     logging.info(f"{len(files)} fichier(s) au total dans '{OCR_OUT_DIR}'.")
@@ -104,24 +163,32 @@ def process_base64_files():
     if not files_to_process:
         return
 
-    # Utilisation du ThreadPoolExecutor pour envoyer plusieurs fichiers en même temps
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # Soumettre toutes les tâches au gestionnaire (on passe aussi la liste des fichiers traités)
-        futures = {
-            executor.submit(process_single_file, filename, processed_set): filename
-            for filename in files_to_process
-        }
+    # Lecture du CSV pour la priorité
+    priority_set = get_priority_files_from_csv(csv_path)
 
-        # Traiter les résultats au fur et à mesure qu'ils se terminent
-        for future in as_completed(futures):
-            filename = futures[future]
-            try:
-                future.result()
-            except Exception as exc:
-                logging.error(
-                    f"Une exception critique inattendue s'est produite pour {filename} : {exc}"
-                )
+    # Séparation en deux files d'attente
+    priority_queue = []
+    normal_queue = []
+
+    for f in files_to_process:
+        if f in priority_set:
+            priority_queue.append(f)
+        else:
+            normal_queue.append(f)
+
+    # Traitement séquentiel des deux files (la prioritaire d'abord, puis la normale)
+    run_batch(priority_queue, processed_set, "PRIORITAIRE (CSV)")
+    run_batch(normal_queue, processed_set, "NORMALE")
 
 
 if __name__ == "__main__":
-    process_base64_files()
+    parser = argparse.ArgumentParser(description="Envoi de fichiers Base64 vers Odoo")
+    parser.add_argument(
+        "--csv",
+        type=str,
+        help="Chemin vers un fichier CSV contenant les fichiers à traiter en priorité",
+        default=None
+    )
+    args = parser.parse_args()
+
+    process_base64_files(csv_path=args.csv)
