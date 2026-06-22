@@ -1,9 +1,9 @@
+import argparse
+import csv
 import logging
 import os
 import sys
 import threading
-import argparse
-import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Permet d'importer le module watcher situé dans le même dossier
@@ -53,29 +53,36 @@ def get_priority_files_from_csv(csv_path):
         return priority_files
 
     try:
-        with open(csv_path, 'r', encoding='utf-8-sig') as f:
-            # Lecture de la première ligne pour deviner le délimiteur
+        with open(csv_path, "r", encoding="utf-8-sig") as f:
             first_line = f.readline()
-            delimiter = ';' if ';' in first_line else ','
+            delimiter = ";" if ";" in first_line else ","
             f.seek(0)
-            
+
             reader = csv.DictReader(f, delimiter=delimiter)
             for row in reader:
-                # Cherche les colonnes courantes
-                name = row.get('complete_name') or row.get('name')
+                # Cherche les colonnes selon votre format (Quality Check) ou fallback
+                name = (
+                    row.get("Quality Check")
+                    or row.get("complete_name")
+                    or row.get("name")
+                )
                 if not name and row:
-                    name = list(row.values())[0] # Fallback sur la 1ère colonne
-                
+                    name = list(row.values())[0]  # Fallback sur la 1ère colonne
+
                 if name:
+                    # Nettoyer les espaces ou retours à la ligne inutiles
+                    name = name.strip()
                     # Retire l'extension s'il y en a une, puis force .base64
-                    base_name = name.rsplit('.', 1)[0] if '.' in name else name
+                    base_name = name.rsplit(".", 1)[0] if "." in name else name
                     b64_name = f"{base_name}.base64"
                     priority_files.add(b64_name)
-                    
-        logging.info(f"{len(priority_files)} fichier(s) prioritaire(s) identifié(s) dans le CSV.")
+
+        logging.info(
+            f"{len(priority_files)} fichier(s) prioritaire(s) identifié(s) dans le CSV."
+        )
     except Exception as e:
         logging.error(f"Erreur lors de la lecture du CSV {csv_path}: {e}")
-        
+
     return priority_files
 
 
@@ -124,7 +131,9 @@ def run_batch(files_list, processed_set, batch_name):
     if not files_list:
         return
 
-    logging.info(f"--- Démarrage de la file {batch_name} ({len(files_list)} fichiers) ---")
+    logging.info(
+        f"--- Démarrage de la file {batch_name} ({len(files_list)} fichiers) ---"
+    )
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {
             executor.submit(process_single_file, filename, processed_set): filename
@@ -187,7 +196,7 @@ if __name__ == "__main__":
         "--csv",
         type=str,
         help="Chemin vers un fichier CSV contenant les fichiers à traiter en priorité",
-        default=None
+        default=None,
     )
     args = parser.parse_args()
 
