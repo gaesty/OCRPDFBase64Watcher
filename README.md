@@ -73,6 +73,11 @@ Si vous avez déjà un dossier (`ocr_out`) rempli de fichiers `.base64` et que v
 ```bash
 python3 send_base64_to_odoo.py
 ```
+ou 
+```bash
+python3 send_base64_to_odoo.py --csv files_to_process_converted.csv
+
+```
 
 Comportement du script `send_base64_to_odoo.py` :
 - Utilise les variables d'environnement Odoo classiques du `.env`.
