@@ -3,3 +3,6 @@ processed_history.txt
 .venv
 watcher/__pycache__
 tests
+send_base64_to_odoo.log
+venv
+watcher/__pycache__/__init__.cpython-314.pyc
