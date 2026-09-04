@@ -221,24 +221,34 @@ class PdfToBase64Handler(FileSystemEventHandler):
         except Exception as e:
             logging.exception(f"Failed to process {path}: {e}")
 
-    def on_created(self, event: FileSystemEvent) -> None:
+    def _submit_event_path(self, event: FileSystemEvent) -> None:
         if event.is_directory:
             return
-        self.submit_path(Path(event.src_path))
+
+        candidate = getattr(event, "src_path", None) or getattr(event, "dest_path", None)
+        if not candidate:
+            return
+
+        path = Path(str(candidate))
+        logging.debug(f"Watch event received for {path} ({type(event).__name__})")
+        self.submit_path(path)
+
+    def on_created(self, event: FileSystemEvent) -> None:
+        self._submit_event_path(event)
+
+    def on_modified(self, event: FileSystemEvent) -> None:
+        self._submit_event_path(event)
 
     def on_moved(self, event: FileSystemEvent) -> None:
-        if event.is_directory:
-            return
-
         dest_path_attr = getattr(event, "dest_path", None)
         src_path_attr = getattr(event, "src_path", None)
 
         if dest_path_attr is not None:
-            dest = Path(str(dest_path_attr))
+            path = Path(str(dest_path_attr))
         elif src_path_attr is not None:
-            dest = Path(str(src_path_attr))
+            path = Path(str(src_path_attr))
         else:
-            # No valid path to process
             return
 
-        self.submit_path(dest)
+        logging.debug(f"Watch move event received for {path} ({type(event).__name__})")
+        self.submit_path(path)

@@ -44,6 +44,102 @@ def load_history(history_file: Path) -> Set[str]:
         return set()
 
 
+# @app.command()
+# def main(
+#     input_dir: Path = typer.Option(
+#         ...,
+#         "--input-dir",
+#         exists=True,
+#         file_okay=False,
+#         dir_okay=True,
+#         readable=True,
+#         help="Folder to watch for incoming PDFs",
+#         envvar="OCR_INPUT_DIRECTORY",
+#     ),
+#     output_dir: Optional[Path] = typer.Option(
+#         None,
+#         "--output-dir",
+#         help="Where to write OCR PDFs and .base64 files; defaults to <input-dir>/base64",
+#         envvar="OCR_OUTPUT_DIRECTORY",
+#     ),
+#     archive_dir: Optional[Path] = typer.Option(
+#         None,
+#         "--archive-dir",
+#         help="Where to archive generated .base64 files by year",
+#         envvar="OCR_ARCHIVE_DIRECTORY",
+#     ),
+#     csv_file: Optional[Path] = typer.Option(
+#         None,
+#         "--csv-file",
+#         exists=True,
+#         file_okay=True,
+#         dir_okay=False,
+#         readable=True,
+#         help="CSV file containing list of files to process (replaces initial scan). Expects columns: complete_name, file_path",
+#     ),
+#     csv_only: bool = typer.Option(
+#         False,
+#         "--csv-only",
+#         help="Exit after processing CSV file (requires --csv-file)",
+#     ),
+#     workers: Optional[int] = typer.Option(
+#         None,
+#         "--workers",
+#         help="Max number of PDFs to process concurrently",
+#         envvar="OCR_WORKERS",
+#     ),
+#     workers_auto: Optional[str] = typer.Option(
+#         None,
+#         "--workers-auto",
+#         flag_value="half",
+#         help=(
+#             "When --workers is not provided: 'half' uses ~50% of CPUs (default), 'full' "
+#             "uses all CPUs (useful for free-threaded Python builds). If the option "
+#             "is given without a value it will default to 'half'."
+#         ),
+#         envvar="OCR_WORKERS_AUTO",
+#     ),
+#     ocr_jobs: Optional[int] = typer.Option(
+#         None,
+#         "--ocr-jobs",
+#         help="Parallel jobs per file for ocrmypdf (set 1 when using multiple workers to avoid oversubscription)",
+#         envvar="OCR_JOBS",
+#     ),
+#     initial_scan_flag: bool = typer.Option(
+#         False,
+#         "--initial-scan",
+#         help="Process existing PDFs at startup",
+#     ),
+#     no_initial_scan: bool = typer.Option(
+#         False,
+#         "--no-initial-scan",
+#         help="Skip processing existing PDFs at startup",
+#     ),
+#     retries: int = typer.Option(
+#         30, "--retries", help="Max readiness checks before giving up"
+#     ),
+#     poll: bool = typer.Option(
+#         False, "--poll", help="Force polling observer (overrides auto-detection)"
+#     ),
+#     no_poll: bool = typer.Option(
+#         False, "--no-poll", help="Force inotify observer (overrides auto-detection)"
+#     ),
+#     loglevel: str = typer.Option(
+#         "INFO", "--loglevel", help="Logging level: DEBUG, INFO, WARNING, ERROR"
+#     ),
+#     output_type: str = typer.Option(
+#         "pdf",
+#         "--output-type",
+#         help="OCR output type: 'pdf' for regular PDF (default) or 'pdfa' for PDF/A-2B",
+#         envvar="OCR_OUTPUT_TYPE",
+#     ),
+#     jbig2: str = typer.Option(
+#         "off",
+#         "--jbig2",
+#         help="JBIG2 compression for bitonal images: 'off' (default), 'lossless', or 'lossy' (requires jbig2 binary)",
+#         envvar="OCR_JBIG2",
+#     ),
+# ):
 @app.command()
 def main(
     input_dir: Path = typer.Option(
@@ -75,7 +171,7 @@ def main(
         file_okay=True,
         dir_okay=False,
         readable=True,
-        help="CSV file containing list of files to process (replaces initial scan). Expects columns: complete_name, file_path",
+        help="CSV file containing list of files to process",
     ),
     csv_only: bool = typer.Option(
         False,
@@ -92,17 +188,13 @@ def main(
         None,
         "--workers-auto",
         flag_value="half",
-        help=(
-            "When --workers is not provided: 'half' uses ~50% of CPUs (default), 'full' "
-            "uses all CPUs (useful for free-threaded Python builds). If the option "
-            "is given without a value it will default to 'half'."
-        ),
+        help="When --workers is not provided: 'half' uses ~50% of CPUs...",
         envvar="OCR_WORKERS_AUTO",
     ),
     ocr_jobs: Optional[int] = typer.Option(
         None,
         "--ocr-jobs",
-        help="Parallel jobs per file for ocrmypdf (set 1 when using multiple workers to avoid oversubscription)",
+        help="Parallel jobs per file for ocrmypdf",
         envvar="OCR_JOBS",
     ),
     initial_scan_flag: bool = typer.Option(
@@ -136,7 +228,7 @@ def main(
     jbig2: str = typer.Option(
         "off",
         "--jbig2",
-        help="JBIG2 compression for bitonal images: 'off' (default), 'lossless', or 'lossy' (requires jbig2 binary)",
+        help="JBIG2 compression for bitonal images: 'off' (default), 'lossless', or 'lossy'",
         envvar="OCR_JBIG2",
     ),
 ):
@@ -146,21 +238,56 @@ def main(
     - A .base64 file is also written alongside the OCR PDF, encoding the same bytes.
     - By default, outputs go to <input>/base64 and existing PDFs are processed at startup.
     """
+
+    # --- FIX PYTHON 3.14 : Nettoyage des chaînes Typer en vrais booléens ---
+    poll = str(poll).lower() in ("true", "1", "yes", "y", "t")
+    no_poll = str(no_poll).lower() in ("true", "1", "yes", "y", "t")
+    initial_scan_flag = str(initial_scan_flag).lower() in ("true", "1", "yes", "y", "t")
+    no_initial_scan = str(no_initial_scan).lower() in ("true", "1", "yes", "y", "t")
+    csv_only = str(csv_only).lower() in ("true", "1", "yes", "y", "t")
+    # ------------------------------------------------------------------------
+
     # Logging
     logging.basicConfig(
         level=getattr(logging, loglevel.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-    # Resolve defaults
-    input_dir = input_dir.expanduser().resolve()
-    if output_dir is None:
-        output_dir = (input_dir / "base64").resolve()
-    else:
-        output_dir = output_dir.expanduser().resolve()
+    # # Resolve defaults
+    # input_dir = input_dir.expanduser().resolve()
+    # if output_dir is None:
+    #     output_dir = (input_dir / "base64").resolve()
+    # else:
+    #     output_dir = output_dir.expanduser().resolve()
 
-    if archive_dir is not None:
-        archive_dir = archive_dir.expanduser().resolve()
+    # if archive_dir is not None:
+    #     archive_dir = archive_dir.expanduser().resolve()
+
+    # --- FIX POUR PYTHON 3.14 (Contournement Typer) ---
+    import os
+    from pathlib import Path
+
+    # 1. Input Dir
+    raw_input = input_dir or os.getenv("OCR_INPUT_DIRECTORY")
+    if not raw_input:
+        logging.error("Erreur critique : OCR_INPUT_DIRECTORY est manquant.")
+        return
+    input_dir = Path(raw_input).expanduser().resolve()
+
+    # 2. Output Dir
+    raw_output = output_dir or os.getenv("OCR_OUTPUT_DIRECTORY")
+    if raw_output:
+        output_dir = Path(raw_output).expanduser().resolve()
+    else:
+        output_dir = (input_dir / "base64").resolve()
+
+    # 3. Archive Dir
+    raw_archive = archive_dir or os.getenv("OCR_ARCHIVE_DIRECTORY")
+    if raw_archive:
+        archive_dir = Path(raw_archive).expanduser().resolve()
+    else:
+        archive_dir = None
+    # --------------------------------------------------
 
     # Resolve observer mode
     if poll and no_poll:

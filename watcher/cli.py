@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -10,10 +11,35 @@ import typer
 from watchdog.observers import Observer
 from watchdog.observers.polling import PollingObserver
 
+# 1. Chargement des variables d'environnement en priorité pour systemd
+from dotenv import load_dotenv
+load_dotenv()
+
 from .handlers import PdfToBase64Handler
 from .utils import is_within
 
+# 2. Imports pour la supervision et Odoo
+from .monitoring import send_kuma_push, verifier_espace_disque
+from .orm_odoo import get_uid
+
 app = typer.Typer(add_completion=False, no_args_is_help=True)
+
+
+def normalize_history_entry(line: str) -> str:
+    """Extrait le nom de fichier d'une ligne d'historique, y compris le format avec timestamp."""
+    value = (line or "").strip()
+    if not value:
+        return ""
+
+    # Format historique : "2026-08-26 12:00:00 : nom_fichier.pdf"
+    match = re.match(
+        r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*[:\-]?\s*(.+)$",
+        value,
+    )
+    if match:
+        value = match.group(1).strip()
+
+    return value
 
 
 def load_history(history_file: Path) -> Set[str]:
@@ -21,11 +47,12 @@ def load_history(history_file: Path) -> Set[str]:
     if not history_file.exists():
         return set()
     try:
-        return set(
-            line.strip()
-            for line in history_file.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        )
+        processed: Set[str] = set()
+        for line in history_file.read_text(encoding="utf-8").splitlines():
+            normalized = normalize_history_entry(line)
+            if normalized:
+                processed.add(normalized)
+        return processed
     except Exception as e:
         logging.warning(f"Impossible de lire l'historique {history_file}: {e}")
         return set()
@@ -125,6 +152,11 @@ def main(
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
+    # Sécurité anti-crash pour systemd
+    if input_dir is None:
+        logging.error("L'argument --input-dir ou la variable d'environnement OCR_INPUT_DIRECTORY est introuvable.")
+        sys.exit(1)
+
     # Resolve defaults
     input_dir = input_dir.expanduser().resolve()
     if output_dir is None:
@@ -211,8 +243,8 @@ def main(
         ocr_jobs,
         output_type,
         jbig2_mode,
-        history_file,  # Passé au handler
-        processed_files,  # Passé au handler
+        history_file,
+        processed_files,
     )
 
     # Determine initial scan behavior (defaults to True)
@@ -262,8 +294,30 @@ def main(
     observer.start()
 
     try:
+        # 3. La boucle principale intègre désormais la supervision Kuma
         while True:
-            time.sleep(1.0)
+            try:
+                # Vérification de l'état de santé du système et des dépendances
+                verifier_espace_disque()
+                
+                uid = get_uid()
+                if not uid:
+                    raise ValueError("Impossible de s'authentifier sur l'API Odoo.")
+                
+                # Si tout est OK, on notifie Uptime Kuma
+                send_kuma_push("up", "OK - Disque, Auth Odoo et Watchdog fonctionnels")
+                
+            except ValueError as e:
+                send_kuma_push("down", str(e))
+                logging.error(f"Erreur de supervision : {e}")
+                
+            except Exception as e:
+                send_kuma_push("down", f"Erreur critique Watchdog : {str(e)}")
+                logging.error(f"Erreur inattendue dans la supervision : {e}")
+            
+            # Attente de 60 secondes (intervalle idéal pour Uptime Kuma)
+            time.sleep(60)
+            
     except KeyboardInterrupt:
         logging.info("Stopping watcher...")
     finally:

@@ -1,0 +1,5 @@
+.env
+processed_history.txt
+.venv
+watcher/__pycache__
+tests
